@@ -7,6 +7,7 @@ using System.Windows.Forms;
 using SalonDesign.Enums;
 using SalonDesign.Models;
 using SalonDesign.Services;
+using SalonDesign.Utilities;
 
 namespace SalonDesign.Forms
 {
@@ -23,6 +24,14 @@ namespace SalonDesign.Forms
         private bool _isResizing;
         private const int RESIZE_HANDLE_SIZE = 8;
         private const int MIN_OBJECT_SIZE = 30;
+
+        // Performance optimization components
+        private RenderingOptimizer _renderingOptimizer;
+        private InvalidationManager _invalidationManager;
+        private SalonObjectRenderer _objectRenderer;
+        private PerformanceMonitor _performanceMonitor;
+        private Point _lastDragPosition;
+        private Size _lastResizeSize;
 
         private Panel canvasPanel;
         private Panel propertyPanel;
@@ -57,6 +66,13 @@ namespace SalonDesign.Forms
             this.Size = new Size(1200, 800);
             this.StartPosition = FormStartPosition.CenterScreen;
 
+            // Enable double buffering for flicker-free rendering
+            this.DoubleBuffered = true;
+            this.SetStyle(ControlStyles.OptimizedDoubleBuffer | 
+                          ControlStyles.AllPaintingInWmPaint | 
+                          ControlStyles.UserPaint, true);
+            this.UpdateStyles();
+
             // Canvas Panel
             canvasPanel = new Panel
             {
@@ -64,10 +80,16 @@ namespace SalonDesign.Forms
                 BackColor = Color.White,
                 BorderStyle = BorderStyle.FixedSingle
             };
+            // Enable double buffering for canvas panel
+            typeof(Panel).InvokeMember("DoubleBuffered",
+                System.Reflection.BindingFlags.SetProperty | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+                null, canvasPanel, new object[] { true });
+            
             canvasPanel.Paint += CanvasPanel_Paint;
             canvasPanel.MouseDown += CanvasPanel_MouseDown;
             canvasPanel.MouseMove += CanvasPanel_MouseMove;
             canvasPanel.MouseUp += CanvasPanel_MouseUp;
+            canvasPanel.Resize += CanvasPanel_Resize;
 
             // Property Panel
             propertyPanel = new Panel
@@ -209,6 +231,13 @@ namespace SalonDesign.Forms
             _service = new SalonDesignService(_repository);
             _propertyService = new DesignPropertyService();
             _objects = new List<SalonObject>();
+            
+            // Initialize performance optimization components
+            Rectangle initialViewport = new Rectangle(0, 0, 1200, 800);
+            _renderingOptimizer = new RenderingOptimizer(initialViewport);
+            _invalidationManager = new InvalidationManager(initialViewport);
+            _objectRenderer = new SalonObjectRenderer(_propertyService);
+            _performanceMonitor = new PerformanceMonitor(60);
         }
 
         private void LoadOrCreateSalon()
@@ -229,118 +258,87 @@ namespace SalonDesign.Forms
         private void LoadObjects()
         {
             _objects = _service.GetSalonObjects(_currentSalon.Id);
+            
+            // Rebuild spatial index with all objects
+            _renderingOptimizer.BuildSpatialIndex(_objects);
+            
             canvasPanel.Invalidate();
         }
 
         private void CanvasPanel_Paint(object sender, PaintEventArgs e)
         {
-            Graphics g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
+            _performanceMonitor.BeginFrame();
+            _performanceMonitor.BeginRender();
 
-            foreach (var obj in _objects)
+            Graphics g = e.Graphics;
+            _objectRenderer.OptimizeGraphics(g);
+
+            // Use viewport culling for better performance with many objects
+            List<SalonObject> visibleObjects;
+            if (_renderingOptimizer.ShouldUseViewportCulling)
             {
-                DrawObject(g, obj);
+                // Get only visible objects using QuadTree
+                Rectangle viewport = canvasPanel.ClientRectangle;
+                visibleObjects = _renderingOptimizer.GetVisibleObjects(viewport);
+            }
+            else
+            {
+                // For small object counts, render all
+                visibleObjects = _objects;
             }
 
+            // Draw all visible objects
+            foreach (var obj in visibleObjects)
+            {
+                _objectRenderer.DrawObject(g, obj);
+            }
+
+            // Draw selection and resize handles for selected object
             if (_selectedObject != null)
             {
-                DrawSelectionBorder(g, _selectedObject);
-                DrawResizeHandles(g, _selectedObject);
+                _objectRenderer.DrawSelectionBorder(g, _selectedObject);
+                _objectRenderer.DrawResizeHandles(g, _selectedObject, RESIZE_HANDLE_SIZE);
+            }
+
+            _performanceMonitor.EndRender();
+            
+            // Optional: Draw performance stats in debug mode
+            #if DEBUG
+            DrawPerformanceStats(g);
+            #endif
+        }
+
+        private void DrawPerformanceStats(Graphics g)
+        {
+            string stats = _performanceMonitor.GetPerformanceReport() + 
+                           $" | Objects: {_objects.Count} | Visible: {_renderingOptimizer.ShouldUseViewportCulling}";
+            
+            using (Font font = new Font("Arial", 8))
+            using (Brush brush = new SolidBrush(Color.Black))
+            using (Brush bgBrush = new SolidBrush(Color.FromArgb(200, Color.Yellow)))
+            {
+                SizeF size = g.MeasureString(stats, font);
+                g.FillRectangle(bgBrush, 5, 5, size.Width + 10, size.Height + 5);
+                g.DrawString(stats, font, brush, 10, 7);
             }
         }
 
         private void DrawObject(Graphics g, SalonObject obj)
         {
-            Color color = _propertyService.GetColor(obj);
-            
-            using (Brush brush = new SolidBrush(color))
-            using (Pen pen = new Pen(Color.Black, 2))
-            {
-                Rectangle rect = new Rectangle(obj.PositionX, obj.PositionY, obj.Width, obj.Height);
-
-                if (obj.ShapeType == ShapeType.Circle)
-                {
-                    g.FillEllipse(brush, rect);
-                    g.DrawEllipse(pen, rect);
-                }
-                else if (obj.ShapeType == ShapeType.Square || obj.ShapeType == ShapeType.Rectangle)
-                {
-                    if (obj.ObjectType == ObjectType.Wall)
-                    {
-                        DrawCheckerPattern(g, rect, color);
-                    }
-                    else
-                    {
-                        g.FillRectangle(brush, rect);
-                    }
-                    g.DrawRectangle(pen, rect);
-                }
-
-                // Draw text
-                string displayText = "";
-                if (!string.IsNullOrEmpty(obj.Text))
-                    displayText = obj.Text;
-                else if (!string.IsNullOrEmpty(obj.Title))
-                    displayText = obj.Title;
-                else if (obj.TableNumber.HasValue)
-                    displayText = obj.TableNumber.Value.ToString();
-
-                if (!string.IsNullOrEmpty(displayText))
-                {
-                    using (Font font = _propertyService.GetFont(obj))
-                    {
-                        SizeF textSize = g.MeasureString(displayText, font);
-                        PointF textPos = new PointF(
-                            rect.X + (rect.Width - textSize.Width) / 2,
-                            rect.Y + (rect.Height - textSize.Height) / 2
-                        );
-                        g.DrawString(displayText, font, Brushes.Black, textPos);
-                    }
-                }
-            }
-        }
-
-        private void DrawCheckerPattern(Graphics g, Rectangle rect, Color baseColor)
-        {
-            int checkSize = 10;
-            Color color1 = baseColor;
-            Color color2 = ControlPaint.Light(baseColor);
-
-            for (int x = rect.Left; x < rect.Right; x += checkSize)
-            {
-                for (int y = rect.Top; y < rect.Bottom; y += checkSize)
-                {
-                    bool useColor1 = ((x - rect.Left) / checkSize + (y - rect.Top) / checkSize) % 2 == 0;
-                    
-                    using (Brush brush = new SolidBrush(useColor1 ? color1 : color2))
-                    {
-                        int width = Math.Min(checkSize, rect.Right - x);
-                        int height = Math.Min(checkSize, rect.Bottom - y);
-                        
-                        g.FillRectangle(brush, x, y, width, height);
-                    }
-                }
-            }
+            // Use the optimized renderer instead
+            _objectRenderer.DrawObject(g, obj);
         }
 
         private void DrawSelectionBorder(Graphics g, SalonObject obj)
         {
-            Rectangle rect = new Rectangle(obj.PositionX - 2, obj.PositionY - 2, obj.Width + 4, obj.Height + 4);
-            using (Pen pen = new Pen(Color.Blue, 2) { DashStyle = DashStyle.Dash })
-            {
-                g.DrawRectangle(pen, rect);
-            }
+            // Use the optimized renderer instead
+            _objectRenderer.DrawSelectionBorder(g, obj);
         }
 
         private void DrawResizeHandles(Graphics g, SalonObject obj)
         {
-            Brush handleBrush = Brushes.Blue;
-            Rectangle[] handles = GetResizeHandles(obj);
-            
-            foreach (var handle in handles)
-            {
-                g.FillRectangle(handleBrush, handle);
-            }
+            // Use the optimized renderer instead
+            _objectRenderer.DrawResizeHandles(g, obj, RESIZE_HANDLE_SIZE);
         }
 
         private Rectangle[] GetResizeHandles(SalonObject obj)
@@ -370,6 +368,10 @@ namespace SalonDesign.Forms
             {
                 UpdatePropertyPanel();
                 
+                // Save initial state for selective invalidation
+                _lastDragPosition = new Point(_selectedObject.PositionX, _selectedObject.PositionY);
+                _lastResizeSize = new Size(_selectedObject.Width, _selectedObject.Height);
+                
                 Rectangle[] handles = GetResizeHandles(_selectedObject);
                 foreach (var handle in handles)
                 {
@@ -397,22 +399,44 @@ namespace SalonDesign.Forms
                 int deltaX = e.X - _dragStartPoint.X;
                 int deltaY = e.Y - _dragStartPoint.Y;
 
+                // Save old position for dirty region
+                Point oldPosition = new Point(_selectedObject.PositionX, _selectedObject.PositionY);
+
                 _selectedObject.PositionX += deltaX;
                 _selectedObject.PositionY += deltaY;
 
+                // Update QuadTree
+                _renderingOptimizer.UpdateObject(_selectedObject);
+
+                // Add dirty regions (old and new position)
+                _invalidationManager.AddMovedObjectDirtyRegions(_selectedObject, oldPosition, RESIZE_HANDLE_SIZE + 5);
+
                 _dragStartPoint = e.Location;
-                canvasPanel.Invalidate();
+                
+                // Selective invalidation - only redraw affected areas
+                InvalidateDirtyRegions();
             }
             else if (_isResizing)
             {
                 int deltaX = e.X - _dragStartPoint.X;
                 int deltaY = e.Y - _dragStartPoint.Y;
 
+                // Save old size for dirty region
+                Size oldSize = new Size(_selectedObject.Width, _selectedObject.Height);
+
                 _selectedObject.Width = Math.Max(MIN_OBJECT_SIZE, _selectedObject.Width + deltaX);
                 _selectedObject.Height = Math.Max(MIN_OBJECT_SIZE, _selectedObject.Height + deltaY);
 
+                // Update QuadTree
+                _renderingOptimizer.UpdateObject(_selectedObject);
+
+                // Add dirty regions (old and new size)
+                _invalidationManager.AddResizedObjectDirtyRegions(_selectedObject, oldSize, RESIZE_HANDLE_SIZE + 5);
+
                 _dragStartPoint = e.Location;
-                canvasPanel.Invalidate();
+                
+                // Selective invalidation - only redraw affected areas
+                InvalidateDirtyRegions();
             }
         }
 
@@ -421,14 +445,51 @@ namespace SalonDesign.Forms
             if (_isDragging && _selectedObject != null)
             {
                 _service.MoveObject(_selectedObject.Id, _selectedObject.PositionX, _selectedObject.PositionY);
+                
+                // Update QuadTree with final position
+                _renderingOptimizer.UpdateObject(_selectedObject);
             }
             else if (_isResizing && _selectedObject != null)
             {
                 _service.ResizeObject(_selectedObject.Id, _selectedObject.Width, _selectedObject.Height);
+                
+                // Update QuadTree with final size
+                _renderingOptimizer.UpdateObject(_selectedObject);
             }
 
             _isDragging = false;
             _isResizing = false;
+        }
+
+        /// <summary>
+        /// Canvas resize event handler - update viewport and optimizer
+        /// </summary>
+        private void CanvasPanel_Resize(object sender, EventArgs e)
+        {
+            Rectangle newViewport = canvasPanel.ClientRectangle;
+            _renderingOptimizer.UpdateViewport(newViewport);
+            _invalidationManager.UpdateCanvasBounds(newViewport);
+        }
+
+        /// <summary>
+        /// Invalidate only dirty regions for better performance
+        /// </summary>
+        private void InvalidateDirtyRegions()
+        {
+            if (_invalidationManager.HasDirtyRegions)
+            {
+                // Optimize dirty regions (merge overlapping areas)
+                _invalidationManager.OptimizeDirtyRegions();
+                
+                // Invalidate each dirty rectangle
+                foreach (Rectangle rect in _invalidationManager.GetDirtyRectangles())
+                {
+                    canvasPanel.Invalidate(rect);
+                }
+                
+                // Clear dirty regions after invalidation
+                _invalidationManager.Clear();
+            }
         }
 
         private SalonObject GetObjectAtPoint(Point point)
@@ -502,7 +563,9 @@ namespace SalonDesign.Forms
             _selectedObject.FontFamily = cmbFontFamily.SelectedItem?.ToString() ?? "Arial";
             _selectedObject.FontSize = (float)numFontSize.Value;
 
-            canvasPanel.Invalidate();
+            // Selective invalidation for property changes
+            _invalidationManager.AddObjectDirtyRegion(_selectedObject, RESIZE_HANDLE_SIZE + 5);
+            InvalidateDirtyRegions();
         }
 
         private void BtnColorPicker_Click(object sender, EventArgs e)
@@ -517,7 +580,10 @@ namespace SalonDesign.Forms
                 if (colorDialog.ShowDialog() == DialogResult.OK)
                 {
                     _propertyService.UpdateColor(_selectedObject, colorDialog.Color);
-                    canvasPanel.Invalidate();
+                    
+                    // Selective invalidation for color changes
+                    _invalidationManager.AddObjectDirtyRegion(_selectedObject, RESIZE_HANDLE_SIZE + 5);
+                    InvalidateDirtyRegions();
                 }
             }
         }
@@ -527,7 +593,13 @@ namespace SalonDesign.Forms
             int tableNum = _objects.Count(o => o.ObjectType == ObjectType.Table) + 1;
             var table = _service.CreateTable(_currentSalon.Id, ShapeType.Square, $"Masa {tableNum}", tableNum, 100, 100, 80, 80);
             _objects.Add(table);
-            canvasPanel.Invalidate();
+            
+            // Add to QuadTree
+            _renderingOptimizer.AddObject(table);
+            
+            // Selective invalidation for new object
+            _invalidationManager.AddObjectDirtyRegion(table, RESIZE_HANDLE_SIZE + 5);
+            InvalidateDirtyRegions();
         }
 
         private void BtnAddRoundTable_Click(object sender, EventArgs e)
@@ -535,21 +607,39 @@ namespace SalonDesign.Forms
             int tableNum = _objects.Count(o => o.ObjectType == ObjectType.Table) + 1;
             var table = _service.CreateTable(_currentSalon.Id, ShapeType.Circle, $"Masa {tableNum}", tableNum, 200, 100, 80, 80);
             _objects.Add(table);
-            canvasPanel.Invalidate();
+            
+            // Add to QuadTree
+            _renderingOptimizer.AddObject(table);
+            
+            // Selective invalidation for new object
+            _invalidationManager.AddObjectDirtyRegion(table, RESIZE_HANDLE_SIZE + 5);
+            InvalidateDirtyRegions();
         }
 
         private void BtnAddWall_Click(object sender, EventArgs e)
         {
             var wall = _service.CreateWall(_currentSalon.Id, ShapeType.Rectangle, "Duvar", 300, 100, 150, 20);
             _objects.Add(wall);
-            canvasPanel.Invalidate();
+            
+            // Add to QuadTree
+            _renderingOptimizer.AddObject(wall);
+            
+            // Selective invalidation for new object
+            _invalidationManager.AddObjectDirtyRegion(wall, RESIZE_HANDLE_SIZE + 5);
+            InvalidateDirtyRegions();
         }
 
         private void BtnAddDecoration_Click(object sender, EventArgs e)
         {
             var decoration = _service.CreateDecoration(_currentSalon.Id, ShapeType.Circle, "Dekorasyon", 400, 100, 50, 50);
             _objects.Add(decoration);
-            canvasPanel.Invalidate();
+            
+            // Add to QuadTree
+            _renderingOptimizer.AddObject(decoration);
+            
+            // Selective invalidation for new object
+            _invalidationManager.AddObjectDirtyRegion(decoration, RESIZE_HANDLE_SIZE + 5);
+            InvalidateDirtyRegions();
         }
 
         private void BtnSave_Click(object sender, EventArgs e)
@@ -568,11 +658,20 @@ namespace SalonDesign.Forms
             {
                 if (MessageBox.Show("Bu objeyi silmek istediğinizden emin misiniz?", "Onay", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                 {
+                    // Add dirty region before removing
+                    _invalidationManager.AddObjectDirtyRegion(_selectedObject, RESIZE_HANDLE_SIZE + 5);
+                    
                     _service.DeleteObject(_selectedObject.Id);
                     _objects.Remove(_selectedObject);
+                    
+                    // Remove from QuadTree
+                    _renderingOptimizer.RemoveObject(_selectedObject);
+                    
                     _selectedObject = null;
                     UpdatePropertyPanel();
-                    canvasPanel.Invalidate();
+                    
+                    // Invalidate dirty regions
+                    InvalidateDirtyRegions();
                 }
             }
         }
