@@ -43,7 +43,14 @@ namespace SalonDesign.Models
 
             if (!string.IsNullOrEmpty(obj.Color))
             {
-                props.Color = ColorTranslator.FromHtml(obj.Color);
+                try
+                {
+                    props.Color = ColorTranslator.FromHtml(obj.Color);
+                }
+                catch
+                {
+                    props.Color = Color.LightGray;
+                }
             }
 
             return props;

@@ -22,6 +22,7 @@ namespace SalonDesign.Forms
         private bool _isDragging;
         private bool _isResizing;
         private const int RESIZE_HANDLE_SIZE = 8;
+        private const int MIN_OBJECT_SIZE = 30;
 
         private Panel canvasPanel;
         private Panel propertyPanel;
@@ -251,51 +252,52 @@ namespace SalonDesign.Forms
         private void DrawObject(Graphics g, SalonObject obj)
         {
             Color color = _propertyService.GetColor(obj);
-            Brush brush = new SolidBrush(color);
-            Pen pen = new Pen(Color.Black, 2);
-
-            Rectangle rect = new Rectangle(obj.PositionX, obj.PositionY, obj.Width, obj.Height);
-
-            if (obj.ShapeType == ShapeType.Circle)
+            
+            using (Brush brush = new SolidBrush(color))
+            using (Pen pen = new Pen(Color.Black, 2))
             {
-                g.FillEllipse(brush, rect);
-                g.DrawEllipse(pen, rect);
-            }
-            else if (obj.ShapeType == ShapeType.Square || obj.ShapeType == ShapeType.Rectangle)
-            {
-                if (obj.ObjectType == ObjectType.Wall)
+                Rectangle rect = new Rectangle(obj.PositionX, obj.PositionY, obj.Width, obj.Height);
+
+                if (obj.ShapeType == ShapeType.Circle)
                 {
-                    DrawCheckerPattern(g, rect, color);
+                    g.FillEllipse(brush, rect);
+                    g.DrawEllipse(pen, rect);
                 }
-                else
+                else if (obj.ShapeType == ShapeType.Square || obj.ShapeType == ShapeType.Rectangle)
                 {
-                    g.FillRectangle(brush, rect);
+                    if (obj.ObjectType == ObjectType.Wall)
+                    {
+                        DrawCheckerPattern(g, rect, color);
+                    }
+                    else
+                    {
+                        g.FillRectangle(brush, rect);
+                    }
+                    g.DrawRectangle(pen, rect);
                 }
-                g.DrawRectangle(pen, rect);
+
+                // Draw text
+                string displayText = "";
+                if (!string.IsNullOrEmpty(obj.Text))
+                    displayText = obj.Text;
+                else if (!string.IsNullOrEmpty(obj.Title))
+                    displayText = obj.Title;
+                else if (obj.TableNumber.HasValue)
+                    displayText = obj.TableNumber.Value.ToString();
+
+                if (!string.IsNullOrEmpty(displayText))
+                {
+                    using (Font font = _propertyService.GetFont(obj))
+                    {
+                        SizeF textSize = g.MeasureString(displayText, font);
+                        PointF textPos = new PointF(
+                            rect.X + (rect.Width - textSize.Width) / 2,
+                            rect.Y + (rect.Height - textSize.Height) / 2
+                        );
+                        g.DrawString(displayText, font, Brushes.Black, textPos);
+                    }
+                }
             }
-
-            // Draw text
-            string displayText = "";
-            if (!string.IsNullOrEmpty(obj.Text))
-                displayText = obj.Text;
-            else if (!string.IsNullOrEmpty(obj.Title))
-                displayText = obj.Title;
-            else if (obj.TableNumber.HasValue)
-                displayText = obj.TableNumber.Value.ToString();
-
-            if (!string.IsNullOrEmpty(displayText))
-            {
-                Font font = _propertyService.GetFont(obj);
-                SizeF textSize = g.MeasureString(displayText, font);
-                PointF textPos = new PointF(
-                    rect.X + (rect.Width - textSize.Width) / 2,
-                    rect.Y + (rect.Height - textSize.Height) / 2
-                );
-                g.DrawString(displayText, font, Brushes.Black, textPos);
-            }
-
-            brush.Dispose();
-            pen.Dispose();
         }
 
         private void DrawCheckerPattern(Graphics g, Rectangle rect, Color baseColor)
@@ -309,13 +311,14 @@ namespace SalonDesign.Forms
                 for (int y = rect.Top; y < rect.Bottom; y += checkSize)
                 {
                     bool useColor1 = ((x - rect.Left) / checkSize + (y - rect.Top) / checkSize) % 2 == 0;
-                    Brush brush = new SolidBrush(useColor1 ? color1 : color2);
                     
-                    int width = Math.Min(checkSize, rect.Right - x);
-                    int height = Math.Min(checkSize, rect.Bottom - y);
-                    
-                    g.FillRectangle(brush, x, y, width, height);
-                    brush.Dispose();
+                    using (Brush brush = new SolidBrush(useColor1 ? color1 : color2))
+                    {
+                        int width = Math.Min(checkSize, rect.Right - x);
+                        int height = Math.Min(checkSize, rect.Bottom - y);
+                        
+                        g.FillRectangle(brush, x, y, width, height);
+                    }
                 }
             }
         }
@@ -323,9 +326,10 @@ namespace SalonDesign.Forms
         private void DrawSelectionBorder(Graphics g, SalonObject obj)
         {
             Rectangle rect = new Rectangle(obj.PositionX - 2, obj.PositionY - 2, obj.Width + 4, obj.Height + 4);
-            Pen pen = new Pen(Color.Blue, 2) { DashStyle = DashStyle.Dash };
-            g.DrawRectangle(pen, rect);
-            pen.Dispose();
+            using (Pen pen = new Pen(Color.Blue, 2) { DashStyle = DashStyle.Dash })
+            {
+                g.DrawRectangle(pen, rect);
+            }
         }
 
         private void DrawResizeHandles(Graphics g, SalonObject obj)
@@ -404,8 +408,8 @@ namespace SalonDesign.Forms
                 int deltaX = e.X - _dragStartPoint.X;
                 int deltaY = e.Y - _dragStartPoint.Y;
 
-                _selectedObject.Width = Math.Max(30, _selectedObject.Width + deltaX);
-                _selectedObject.Height = Math.Max(30, _selectedObject.Height + deltaY);
+                _selectedObject.Width = Math.Max(MIN_OBJECT_SIZE, _selectedObject.Width + deltaX);
+                _selectedObject.Height = Math.Max(MIN_OBJECT_SIZE, _selectedObject.Height + deltaY);
 
                 _dragStartPoint = e.Location;
                 canvasPanel.Invalidate();

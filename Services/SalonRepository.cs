@@ -36,7 +36,7 @@ namespace SalonDesign.Services
         public Salon GetSalonWithObjects(int id)
         {
             return _context.Salons
-                .Include("Objects")
+                .Include(s => s.Objects)
                 .FirstOrDefault(s => s.Id == id);
         }
 
@@ -98,9 +98,18 @@ namespace SalonDesign.Services
             }
         }
 
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _context?.Dispose();
+            }
+        }
+
         public void Dispose()
         {
-            _context?.Dispose();
+            Dispose(true);
+            GC.SuppressFinalize(this);
         }
     }
 }
