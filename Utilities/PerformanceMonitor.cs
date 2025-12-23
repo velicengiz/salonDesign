@@ -152,15 +152,7 @@ namespace SalonDesign.Utilities
         /// </summary>
         public string GetPerformanceReport()
         {
-            return string.Format(
-                "FPS: {0:F1} (Avg: {1:F1}) | Render: {2:F2}ms (Min: {3:F2}ms, Max: {4:F2}ms) | Frames: {5}",
-                currentFps,
-                averageFps,
-                averageRenderTime,
-                (minRenderTime / (double)Stopwatch.Frequency) * 1000,
-                (maxRenderTime / (double)Stopwatch.Frequency) * 1000,
-                totalFrames
-            );
+            return $"FPS: {currentFps:F1} (Avg: {averageFps:F1}) | Render: {averageRenderTime:F2}ms (Min: {(minRenderTime / (double)Stopwatch.Frequency) * 1000:F2}ms, Max: {(maxRenderTime / (double)Stopwatch.Frequency) * 1000:F2}ms) | Frames: {totalFrames}";
         }
 
         /// <summary>
