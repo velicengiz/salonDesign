@@ -260,10 +260,21 @@ public class SalonServiceTests
 {
     [TestMethod]
     public void CreateTable_ShouldReturnTable()
+    {
+        // Arrange, Act, Assert
+    }
+    
     [TestMethod]
     public void MoveObject_ShouldUpdatePosition()
+    {
+        // Arrange, Act, Assert
+    }
+    
     [TestMethod]
     public void ResizeObject_ShouldUpdateDimensions()
+    {
+        // Arrange, Act, Assert
+    }
 }
 
 [TestClass]
@@ -271,8 +282,15 @@ public class RepositoryTests
 {
     [TestMethod]
     public void AddSalon_ShouldSaveToDatabase()
+    {
+        // Arrange, Act, Assert
+    }
+    
     [TestMethod]
     public void GetSalonWithObjects_ShouldIncludeObjects()
+    {
+        // Arrange, Act, Assert
+    }
 }
 
 [TestClass]
@@ -280,8 +298,15 @@ public class DesignPropertiesTests
 {
     [TestMethod]
     public void FromSalonObject_ShouldMapCorrectly()
+    {
+        // Arrange, Act, Assert
+    }
+    
     [TestMethod]
     public void ApplyToSalonObject_ShouldUpdateObject()
+    {
+        // Arrange, Act, Assert
+    }
 }
 ```
 
@@ -292,8 +317,15 @@ public class DatabaseIntegrationTests
 {
     [TestMethod]
     public void EndToEnd_CreateAndRetrieveSalon()
+    {
+        // Arrange, Act, Assert
+    }
+    
     [TestMethod]
     public void CascadeDelete_ShouldDeleteObjects()
+    {
+        // Arrange, Act, Assert
+    }
 }
 ```
 
